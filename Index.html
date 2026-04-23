@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Afinador PRO v4</title>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #0b0b0b;
+            color: #fff;
+            text-align: center;
+        }
+
+        h2 {
+            margin: 20px 0;
+        }
+
+        /* 🎚 Medidor */
+        .gauge {
+            width: 220px;
+            height: 120px;
+            margin: 20px auto;
+            position: relative;
+        }
+
+        .arc {
+            width: 100%;
+            height: 100%;
+            border-top-left-radius: 200px;
+            border-top-right-radius: 200px;
+            border: 6px solid #333;
+            border-bottom: none;
+        }
+
+        .needle {
+            width: 3px;
+            height: 100px;
+            background: red;
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform-origin: bottom;
+            transform: rotate(0deg);
+            transition: transform 0.15s ease;
+        }
+
+        /* 🎵 Nota */
+        .note {
+            font-size: 40px;
+        }
+
+        /* 📊 Cents */
+        .cents {
+            color: #aaa;
+        }
+
+        /* 🎸 Cordas */
+        .container {
+            display: flex;
+            justify-content: space-around;
+            padding: 20px;
+            max-width: 500px;
+            margin: auto;
+        }
+
+        .corda {
+            padding: 12px;
+            border-radius: 12px;
+            background: #1a1a1a;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        /* ativa */
+        .corda.ativa {
+            background: #2a2a2a;
+        }
+
+        /* 💡 afinado */
+        .corda.afinada {
+            background: #00ff88;
+            color: #000;
+            box-shadow: 0 0 20px #00ff88;
+            animation: pulse 1s infinite;
+        }
+
+        /* 🔴 desafinado */
+        .corda.desafinada {
+            background: #ff3b3b;
+            box-shadow: 0 0 10px #ff3b3b;
+        }
+
+        /* animação */
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 10px #00ff88;
+            }
+
+            50% {
+                box-shadow: 0 0 25px #00ff88;
+            }
+
+            100% {
+                box-shadow: 0 0 10px #00ff88;
+            }
+        }
+
+        .status {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>Afinador PRO 🎸</h2>
+
+    <div class="gauge">
+        <div class="arc"></div>
+        <div class="needle" id="needle"></div>
+    </div>
+
+    <div class="note" id="note">--</div>
+    <div class="cents" id="cents">0 cents</div>
+
+    <div class="container">
+        <div class="corda" data-freq="82.41">Mi</div>
+        <div class="corda" data-freq="110">Lá</div>
+        <div class="corda" data-freq="146.83">Ré</div>
+        <div class="corda" data-freq="196">Sol</div>
+        <div class="corda" data-freq="246.94">Si</div>
+        <div class="corda" data-freq="329.63">Mi</div>
+    </div>
+
+    <div class="status" id="status">Escolha uma corda</div>
+
+    <script>
+        let selectedFreq = null;
+        let locked = false;
+
+        const needle = document.getElementById("needle");
+        const centsEl = document.getElementById("cents");
+        const status = document.getElementById("status");
+
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Seleção manual (sem automático)
+        document.querySelectorAll(".corda").forEach(c => {
+            c.addEventListener("click", () => {
+                document.querySelectorAll(".corda").forEach(el => {
+                    el.classList.remove("ativa", "afinada", "desafinada");
+                });
+
+                c.classList.add("ativa");
+                selectedFreq = parseFloat(c.dataset.freq);
+                locked = false;
+
+                status.innerText = "Toque a corda...";
+            });
+        });
+
+        // 🎤 Microfone
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            const analyser = audioContext.createAnalyser();
+            const mic = audioContext.createMediaStreamSource(stream);
+            mic.connect(analyser);
+
+            const data = new Float32Array(analyser.fftSize);
+
+            function loop() {
+                analyser.getFloatTimeDomainData(data);
+                let pitch = autoCorrelate(data, audioContext.sampleRate);
+
+                if (pitch && selectedFreq) {
+                    let cents = Math.floor(1200 * Math.log2(pitch / selectedFreq));
+                    centsEl.innerText = cents + " cents";
+
+                    const ativa = document.querySelector(".corda.ativa");
+
+                    // trava quando perfeito
+                    if (Math.abs(cents) < 3) {
+                        if (!locked) {
+                            status.innerText = "✔ Afinado";
+
+                            // vibração
+                            if (navigator.vibrate) navigator.vibrate(200);
+
+                            locked = true;
+                        }
+
+                        needle.style.transform = "rotate(0deg)";
+                        needle.style.background = "#00ff88";
+
+                        ativa.classList.add("afinada");
+                        ativa.classList.remove("desafinada");
+
+                    } else {
+                        locked = false;
+
+                        let deg = Math.max(-50, Math.min(50, cents));
+                        needle.style.transform = `rotate(${deg}deg)`;
+
+                        ativa.classList.remove("afinada");
+
+                        if (cents > 0) {
+                            status.innerText = "Agudo";
+                            needle.style.background = "orange";
+                        } else {
+                            status.innerText = "Grave";
+                            needle.style.background = "red";
+                        }
+
+                        ativa.classList.add("desafinada");
+                    }
+                }
+
+                requestAnimationFrame(loop);
+            }
+
+            loop();
+        });
+
+        // pitch detect
+        function autoCorrelate(buf, sampleRate) {
+            let SIZE = buf.length;
+            let rms = 0;
+
+            for (let i = 0; i < SIZE; i++) {
+                rms += buf[i] * buf[i];
+            }
+
+            rms = Math.sqrt(rms / SIZE);
+            if (rms < 0.01) return null;
+
+            let r1 = 0, r2 = SIZE - 1;
+            for (let i = 0; i < SIZE / 2; i++) {
+                if (Math.abs(buf[i]) < 0.2) { r1 = i; break; }
+            }
+
+            for (let i = 1; i < SIZE / 2; i++) {
+                if (Math.abs(buf[SIZE - i]) < 0.2) { r2 = SIZE - i; break; }
+            }
+
+            buf = buf.slice(r1, r2);
+            SIZE = buf.length;
+
+            let c = new Array(SIZE).fill(0);
+
+            for (let i = 0; i < SIZE; i++) {
+                for (let j = 0; j < SIZE - i; j++) {
+                    c[i] += buf[j] * buf[j + i];
+                }
+            }
+
+            let d = 0;
+            while (c[d] > c[d + 1]) d++;
+
+            let maxval = -1, maxpos = -1;
+
+            for (let i = d; i < SIZE; i++) {
+                if (c[i] > maxval) {
+                    maxval = c[i];
+                    maxpos = i;
+                }
+            }
+
+            return sampleRate / maxpos;
+        }
+    </script>
+
+</body>
+
+</html>
